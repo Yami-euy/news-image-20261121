@@ -1,19 +1,28 @@
 #!/usr/bin/env python3
-"""Render the front page of THE WORLD IN ONE PAGE for 21 November 2026.
+"""Render THE WORLD IN ONE PAGE v3 — Saturday 21 November 2026.
 
-Draws a newspaper front page (1024x1024) in pure PIL: no network, no
-photos, no downloaded assets. Every map, ship and chart is drawn from
+A newspaper front page (1024x1024) drawn in pure PIL: no network, no
+photos, no downloaded assets. Every map, ship and panel is drawn from
 vector primitives in this file, so the output is deterministic: run it
 three times and the bytes are identical.
 
-Stories: 36, across 9 regions. The five core stories were checked
-against live news reporting on 22 November 2026; the rest appear in
-at least two of the day's top-ranked entries and in the named outlets.
-Nothing here is invented: figures are as first reported, claims are
-labelled CLAIM, and the DATE CHECK box says what was left out and why.
+v3 returns to the newspaper format of v1 and of the top-ranked entries
+(the v2 poster was rejected by the owner as "aneh") and tightens it:
+a cleaner timeline, shorter stat captions, a redrawn Sparta II panel,
+a simpler COP31 panel, map pins that no longer pile up over Europe,
+and a list whose sources can no longer collide with the headlines.
+
+Stories: 37, across 9 regions. The five core stories were re-checked
+against live reporting on 23 November 2026; two v1 errors are fixed
+here: the Peru quake DID kill (1 dead, 16 hurt, 853 homeless) and the
+Bahrain hero no longer claims "no one hurt" (casualties were only
+confirmed the next day). New story 37: Lewis Pugh's 15 km Hormuz swim,
+first reported 21 November. Claims are labelled CLAIM, and the DATE
+CHECK box says what was left out and why.
 """
 
 import hashlib
+import math
 import sys
 from PIL import Image, ImageDraw, ImageFont
 
@@ -21,7 +30,6 @@ W, H = 1024, 1024
 
 # ---------------------------------------------------------------- palette
 PAPER = (247, 243, 232)
-PAPER_DARK = (238, 232, 214)
 INK = (17, 17, 17)
 INK_SOFT = (60, 58, 52)
 RED = (178, 34, 34)
@@ -34,6 +42,8 @@ GREEN = (36, 110, 60)
 GOLD = (176, 141, 42)
 GREY = (120, 118, 110)
 RULE = (90, 86, 76)
+DUSK = (52, 68, 92)
+DUSK_DARK = (30, 40, 58)
 
 REGION_COLORS = {
     "Europe": (31, 78, 121),
@@ -54,42 +64,36 @@ SERIF = f"{FD}/liberation/LiberationSerif-Regular.ttf"
 SERIF_I = f"{FD}/liberation/LiberationSerif-Italic.ttf"
 SANS_B = f"{FD}/liberation/LiberationSans-Bold.ttf"
 SANS = f"{FD}/liberation/LiberationSans-Regular.ttf"
-SANS_I = f"{FD}/liberation/LiberationSans-Italic.ttf"
 
 
 def F(path, size):
     return ImageFont.truetype(path, size)
 
 
-f_headline = F(SERIF_B, 62)
-f_headline_small = F(SERIF_B, 46)
-f_hero_head = F(SERIF_B, 20)
-f_hero_head2 = F(SERIF_B, 19)
+f_masthead = F(SERIF_B, 62)
+f_hero_head = F(SERIF_B, 21)
 f_small_head = F(SERIF_B, 13)
 f_deck = F(SERIF, 11)
-f_deck_small = F(SERIF, 10)
+f_deck_sm = F(SERIF, 10)
 f_kicker = F(SANS_B, 9)
 f_kicker_sm = F(SANS_B, 8)
 f_label = F(SANS_B, 9)
-f_label_sm = F(SANS_B, 8)
 f_tiny = F(SANS, 8)
 f_tiny_b = F(SANS_B, 8)
 f_stat = F(SERIF_B, 26)
 f_stat_sm = F(SERIF_B, 20)
 f_italic = F(SERIF_I, 11)
-f_italic_sm = F(SERIF_I, 10)
 f_sans = F(SANS, 9)
-f_sans_sm = F(SANS, 8)
 f_list = F(SANS, 10)
 f_list_b = F(SANS_B, 10)
 f_num = F(SERIF_B, 13)
 
-# ---------------------------------------------------------------- helpers
 img = Image.new("RGB", (W, H), PAPER)
 d = ImageDraw.Draw(img)
 
 
-def text_wrapped(draw, xy, text, font, max_w, fill=INK, spacing=1):
+# ---------------------------------------------------------------- helpers
+def wrap(draw, xy, text, font, max_w, fill=INK, leading=1):
     """Draw text wrapped to max_w; return the y just below the last line."""
     x, y = xy
     words = text.split()
@@ -106,43 +110,55 @@ def text_wrapped(draw, xy, text, font, max_w, fill=INK, spacing=1):
         lines.append(cur)
     for line in lines:
         draw.text((x, y), line, font=font, fill=fill)
-        y += font.size + spacing
+        y += font.size + leading
     return y
 
 
-def centered(draw, y, text, font, fill=INK, cx=W // 2):
+def centred(draw, y, text, font, fill=INK, cx=W // 2):
     w = draw.textlength(text, font=font)
     draw.text((cx - w / 2, y), text, font=font, fill=fill)
     return y + font.size + 2
 
 
-def hline(y, x0=16, x1=W - 16, fill=RULE, width=1):
+def rule(y, x0=16, x1=W - 16, fill=RULE, width=1):
     d.line([(x0, y), (x1, y)], fill=fill, width=width)
 
 
-def badge(draw, x, y, text, fill=GREEN):
-    """Small CONFIRMED / OFFICIAL / REPORTED / CLAIM pill."""
+def pill(draw, x, y, text, fill=GREEN):
+    """Small CONFIRMED / OFFICIAL / CLAIM status pill, white on colour."""
     w = draw.textlength(text, font=f_kicker_sm) + 10
-    h = 12
-    draw.rounded_rectangle([x, y, x + w, y + h], radius=2, fill=fill)
+    draw.rounded_rectangle([x, y, x + w, y + 12], radius=2, fill=fill)
     draw.text((x + 5, y + 1), text, font=f_kicker_sm, fill=(255, 255, 255))
     return x + w
 
 
-def kicker_line(draw, x, y, num, place, topic, status):
-    """'1  BAHRAIN · STRAIT OF HORMUZ · WAR' + status pill on the right."""
+def kicker(draw, x, y, num, place, status):
+    """'1  BAHRAIN · HORMUZ · CONFLICT' with the story number in red."""
     draw.text((x, y), str(num), font=f_num, fill=RED)
-    nx = x + 16
-    draw.text((nx, y + 1), f"{place} · {topic}", font=f_kicker, fill=INK)
+    draw.text((x + 16, y + 1), place, font=f_kicker, fill=INK)
     return y
 
 
-def source_line(draw, x, y, text, max_x=W - 16):
+def status_fill(status):
+    if status == "CONFIRMED":
+        return GREEN
+    if status == "OFFICIAL":
+        return BLUE
+    if status == "REPORTED":
+        return GOLD
+    return RED
+
+
+def source(draw, x, y, text):
     draw.text((x, y), text, font=f_tiny, fill=GREY)
 
 # ------------------------------------------------------- hero illustrations
 def draw_hormuz(draw, x0, y0, w, h):
-    """Strait of Hormuz map: Iran top-right, Gulf below, Bahrain on fire."""
+    """Strait of Hormuz map: Iran top-right, Gulf below, Bahrain on fire.
+
+    Two dashed missile arcs run from Iran toward Bahrain, and both
+    tankers burn — the day's two facts, drawn, not listed.
+    """
     draw.rectangle([x0, y0, x0 + w, y0 + h], fill=SEA, outline=RULE, width=1)
     # Iran landmass (top right)
     draw.polygon([(x0 + w * 0.52, y0), (x0 + w, y0), (x0 + w, y0 + h * 0.52),
@@ -159,23 +175,29 @@ def draw_hormuz(draw, x0, y0, w, h):
     draw.polygon([(x0 + w * 0.86, y0 + h * 0.55), (x0 + w, y0 + h * 0.58),
                   (x0 + w, y0 + h * 0.78), (x0 + w * 0.88, y0 + h * 0.72)],
                  fill=LAND)
-    # Strait label + dashed tanker route
-    draw.text((x0 + w * 0.60, y0 + h * 0.52), "STRAIT OF", font=f_tiny_b, fill=INK)
-    draw.text((x0 + w * 0.60, y0 + h * 0.52 + 10), "HORMUZ", font=f_tiny_b, fill=INK)
+    # dashed missile arcs from Iran down to Bahrain
+    for arc in (0.30, 0.44):
+        for i in range(14):
+            t = i / 13.0
+            px = x0 + w * (0.78 - 0.52 * t)
+            py = y0 + h * (0.08 + 0.42 * t * t + arc * 0.10 * (1 - t))
+            draw.ellipse([px - 1, py - 1, px + 1, py + 1], fill=RED)
+    # dashed tanker route through the strait
     for i in range(9):
         t = i / 8.0
         px = x0 + w * (0.42 + 0.30 * t)
         py = y0 + h * (0.44 + 0.10 * t)
         draw.ellipse([px - 2, py - 2, px + 2, py + 2], fill=RED)
-    # tanker icons (two small hulls)
+    # two burning tankers (hull + flame)
     for tx, ty in [(x0 + w * 0.78, y0 + h * 0.60), (x0 + w * 0.86, y0 + h * 0.68)]:
+        draw.polygon([(tx - 3, ty - 12), (tx + 2, ty - 4), (tx + 7, ty - 12),
+                      (tx + 10, ty - 2)], fill=(255, 140, 0))
         draw.rectangle([tx - 9, ty - 3, tx + 9, ty + 3], fill=(40, 40, 40))
         draw.rectangle([tx - 5, ty - 7, tx + 1, ty - 3], fill=(40, 40, 40))
         draw.polygon([(tx + 9, ty - 3), (tx + 14, ty), (tx + 9, ty + 3)], fill=RED)
-    # Bahrain fire burst (left, on the coast)
+    # Bahrain fire burst on the coast
     bx, by = x0 + w * 0.24, y0 + h * 0.52
     for ang in range(0, 360, 45):
-        import math
         r = 13
         ex = bx + r * math.cos(math.radians(ang))
         ey = by + r * math.sin(math.radians(ang))
@@ -185,6 +207,8 @@ def draw_hormuz(draw, x0, y0, w, h):
     draw.rounded_rectangle([bx - 34, by + 14, bx + 34, by + 28], radius=2, fill=RED)
     draw.text((bx - 29, by + 16), "SITE ON FIRE", font=f_tiny_b, fill=(255, 255, 255))
     # labels
+    draw.text((x0 + w * 0.60, y0 + h * 0.52), "STRAIT OF", font=f_tiny_b, fill=INK)
+    draw.text((x0 + w * 0.60, y0 + h * 0.52 + 10), "HORMUZ", font=f_tiny_b, fill=INK)
     draw.text((x0 + w * 0.68, y0 + 6), "IRAN", font=f_label, fill=INK)
     draw.text((x0 + 8, y0 + h - 26), "SAUDI", font=f_tiny_b, fill=INK_SOFT)
     draw.text((x0 + 8, y0 + h - 16), "ARABIA", font=f_tiny_b, fill=INK_SOFT)
@@ -195,26 +219,34 @@ def draw_hormuz(draw, x0, y0, w, h):
 
 
 def draw_sparta(draw, x0, y0, w, h):
-    """Sparta II cargo ship on fire in the Gulf of Finland."""
-    draw.rectangle([x0, y0, x0 + w, y0 + h], fill=(24, 32, 44), outline=RULE, width=1)
-    # sky glow + smoke
-    for i, (sx, sy, sr) in enumerate([(0.42, 0.30, 26), (0.52, 0.22, 30), (0.62, 0.30, 24),
-                                     (0.50, 0.12, 22), (0.58, 0.08, 18)]):
-        draw.ellipse([x0 + w * sx - sr, y0 + h * sy - sr * 0.7,
-                      x0 + w * sx + sr, y0 + h * sy + sr * 0.7],
-                     fill=(90, 92, 96))
-    # flames on deck
+    """Sparta II cargo ship burning in the Gulf of Finland, at dusk.
+
+    Redrawn for v3: a lighter dusk sky so the ship reads at small
+    size, one big flame over the deck, containers sitting on the hull
+    instead of floating above it, and two drones on dashed paths.
+    """
+    draw.rectangle([x0, y0, x0 + w, y0 + h], fill=DUSK, outline=RULE, width=1)
+    # pale horizon band
+    draw.rectangle([x0, y0 + h * 0.42, x0 + w, y0 + h * 0.55], fill=(120, 130, 150))
+    # smoke, small and high so it does not swallow the ship
+    for sx, sy, sr in [(0.46, 0.22, 20), (0.54, 0.15, 24), (0.62, 0.22, 18),
+                       (0.52, 0.08, 16)]:
+        draw.ellipse([x0 + w * sx - sr, y0 + h * sy - sr * 0.6,
+                      x0 + w * sx + sr, y0 + h * sy + sr * 0.6],
+                     fill=(140, 142, 148))
+    # one big flame over the deck
     fx, fy = x0 + w * 0.52, y0 + h * 0.52
-    draw.polygon([(fx - 26, fy + 8), (fx - 14, fy - 22), (fx - 4, fy - 2),
-                  (fx + 6, fy - 30), (fx + 16, fy - 6), (fx + 26, fy + 8)],
+    draw.polygon([(fx - 24, fy + 8), (fx - 13, fy - 26), (fx - 4, fy - 4),
+                  (fx + 6, fy - 34), (fx + 15, fy - 8), (fx + 24, fy + 8)],
                  fill=(255, 140, 0))
-    draw.polygon([(fx - 14, fy + 8), (fx - 6, fy - 12), (fx + 4, fy - 2),
-                  (fx + 12, fy - 16), (fx + 16, fy + 8)], fill=(255, 210, 0))
+    draw.polygon([(fx - 13, fy + 8), (fx - 5, fy - 14), (fx + 4, fy - 4),
+                  (fx + 11, fy - 18), (fx + 15, fy + 8)], fill=(255, 210, 0))
     # sea
     draw.rectangle([x0, y0 + h * 0.62, x0 + w, y0 + h], fill=(38, 68, 96))
     for i in range(6):
         wx = x0 + 12 + i * 52
-        draw.line([(wx, y0 + h * 0.70 + (i % 2) * 8), (wx + 26, y0 + h * 0.70 + (i % 2) * 8)],
+        draw.line([(wx, y0 + h * 0.70 + (i % 2) * 8),
+                   (wx + 26, y0 + h * 0.70 + (i % 2) * 8)],
                   fill=(120, 170, 210), width=2)
     # hull
     draw.polygon([(x0 + w * 0.10, y0 + h * 0.52), (x0 + w * 0.90, y0 + h * 0.52),
@@ -222,22 +254,27 @@ def draw_sparta(draw, x0, y0, w, h):
                  fill=(16, 16, 18))
     draw.rectangle([x0 + w * 0.10, y0 + h * 0.52, x0 + w * 0.90, y0 + h * 0.56],
                    fill=(120, 20, 20))
-    # containers
+    # containers, sitting on the deck line
     for i, cx in enumerate([0.16, 0.28, 0.40, 0.62, 0.74]):
-        c = [(200, 60, 40), (40, 90, 140), (180, 150, 40), (60, 120, 70), (150, 80, 30)][i]
-        draw.rectangle([x0 + w * cx, y0 + h * 0.36, x0 + w * (cx + 0.10), y0 + h * 0.52],
-                       fill=c, outline=(20, 20, 20))
-    # bridge tower
-    draw.rectangle([x0 + w * 0.84, y0 + h * 0.30, x0 + w * 0.90, y0 + h * 0.52],
+        c = [(200, 60, 40), (40, 90, 140), (180, 150, 40),
+             (60, 120, 70), (150, 80, 30)][i]
+        draw.rectangle([x0 + w * cx, y0 + h * 0.38, x0 + w * (cx + 0.10),
+                        y0 + h * 0.52], fill=c, outline=(20, 20, 20))
+    # bridge tower at the stern
+    draw.rectangle([x0 + w * 0.84, y0 + h * 0.32, x0 + w * 0.90, y0 + h * 0.52],
                    fill=(220, 220, 215), outline=(20, 20, 20))
-    # drones with dashed paths
-    for dx, dy in [(0.18, 0.14), (0.30, 0.08)]:
+    # drones with dashed approach paths
+    for dx, dy in [(0.16, 0.12), (0.28, 0.06)]:
         px, py = x0 + w * dx, y0 + h * dy
-        draw.line([(px, py), (px + 26, py + 18)], fill=(200, 200, 200), width=1)
-        draw.ellipse([px - 4, py - 2, px + 4, py + 2], fill=(220, 220, 220))
-        draw.line([(px - 6, py - 4), (px + 6, py + 4)], fill=(220, 220, 220), width=1)
+        for k in range(5):
+            qx = px + k * 6
+            qy = py + k * 4
+            draw.ellipse([qx - 1, qy - 1, qx + 1, qy + 1], fill=(220, 220, 220))
+        draw.ellipse([px - 4, py - 2, px + 4, py + 2], fill=(230, 230, 230))
+        draw.line([(px - 6, py - 4), (px + 6, py + 4)], fill=(230, 230, 230), width=1)
     draw.text((x0 + 8, y0 + h - 40), "06:50 UTC", font=f_label, fill=(255, 255, 255))
-    draw.text((x0 + 8, y0 + h - 28), "two drones, taken off", font=f_tiny, fill=(220, 220, 220))
+    draw.text((x0 + 8, y0 + h - 28), "two drones, taken off", font=f_tiny,
+              fill=(220, 220, 220))
     draw.rounded_rectangle([x0 + w - 108, y0 + h - 24, x0 + w - 6, y0 + h - 8],
                            radius=2, fill=(255, 255, 255))
     draw.text((x0 + w - 103, y0 + h - 22), "SPARTA II", font=f_tiny_b, fill=INK)
@@ -252,7 +289,12 @@ def draw_sparta(draw, x0, y0, w, h):
 
 
 def draw_cop31(draw, x0, y0, w, h):
-    """COP31: November calendar in overtime + 1.5C thermometer + draft text."""
+    """COP31: November calendar in overtime + draft text + clock.
+
+    Simplified for v3: the thermometer is gone (it duplicated the
+    story's point); the calendar, the crossed-out draft line and the
+    overtime clock each get room to breathe.
+    """
     draw.rectangle([x0, y0, x0 + w, y0 + h], fill=(232, 242, 228), outline=RULE, width=1)
     # header
     draw.rectangle([x0, y0, x0 + w, y0 + 26], fill=GREEN)
@@ -263,8 +305,7 @@ def draw_cop31(draw, x0, y0, w, h):
     # calendar grid: Nov 9..21
     gx, gy = x0 + 10, y0 + 36
     cw, ch = 22, 20
-    days = list(range(9, 22))
-    for i, day in enumerate(days):
+    for i, day in enumerate(range(9, 22)):
         cx = gx + (i % 7) * (cw + 3)
         cy = gy + (i // 7) * (ch + 3)
         if day == 21:
@@ -276,14 +317,6 @@ def draw_cop31(draw, x0, y0, w, h):
             draw.text((cx + 5, cy + 3), str(day), font=f_tiny, fill=INK)
     draw.text((gx, gy + 2 * (ch + 3) + 4), "NOV 9–20 SCHEDULED", font=f_tiny, fill=GREY)
     draw.text((gx + 118, gy + 2 * (ch + 3) + 4), "+1 DAY", font=f_tiny_b, fill=RED)
-    # thermometer
-    tx = x0 + w - 56
-    ty = y0 + 40
-    draw.rounded_rectangle([tx + 12, ty, tx + 22, ty + 62], radius=8,
-                           outline=RED, width=2, fill=(255, 255, 255))
-    draw.ellipse([tx + 6, ty + 56, tx + 28, ty + 80], fill=RED)
-    draw.rectangle([tx + 15, ty + 34, tx + 19, ty + 62], fill=RED)
-    draw.text((tx - 8, ty + 84), "1.5°C", font=f_tiny_b, fill=RED_DARK)
     # draft text box
     bx, by = x0 + 10, y0 + h - 52
     draw.rectangle([bx, by, x0 + w - 10, by + 42], fill=(255, 255, 255),
@@ -303,20 +336,20 @@ def draw_cop31(draw, x0, y0, w, h):
 # ---------------------------------------------------------- small icons
 def icon_quake(draw, x, y, s=62):
     draw.rectangle([x, y, x + s, y + s], fill=(245, 235, 210), outline=RULE)
+    draw.text((x + 6, y + 4), "M6.7", font=F(SERIF_B, 13), fill=INK)
     pts = [(x + 4, y + s * 0.55), (x + 14, y + s * 0.55), (x + 20, y + s * 0.25),
            (x + 28, y + s * 0.80), (x + 36, y + s * 0.35), (x + 44, y + s * 0.55),
            (x + 58, y + s * 0.55)]
     draw.line(pts, fill=RED, width=2)
-    draw.text((x + 6, y + 4), "M6.7", font=F(SERIF_B, 13), fill=INK)
     draw.text((x + 6, y + s - 14), "108 KM", font=f_tiny_b, fill=GREY)
 
 
 def icon_cuffs(draw, x, y, s=62):
     draw.rectangle([x, y, x + s, y + s], fill=(232, 238, 244), outline=RULE)
+    draw.text((x + 6, y + 4), "11 DEAD", font=f_tiny_b, fill=RED_DARK)
     draw.ellipse([x + 10, y + 22, x + 28, y + 40], outline=INK, width=3)
     draw.ellipse([x + 34, y + 22, x + 52, y + 40], outline=INK, width=3)
     draw.line([(x + 28, y + 31), (x + 34, y + 31)], fill=INK, width=3)
-    draw.text((x + 6, y + 4), "11 DEAD", font=f_tiny_b, fill=RED_DARK)
     draw.text((x + 6, y + s - 14), "FBI TOP TEN", font=f_tiny, fill=GREY)
 
 
@@ -346,7 +379,6 @@ def icon_trade(draw, x, y, s=62):
     draw.rectangle([x, y, x + s, y + s], fill=(232, 238, 244), outline=RULE)
     draw.ellipse([x + 8, y + 8, x + 28, y + 28], fill=BLUE)
     for i in range(8):
-        import math
         ax = x + 18 + 7 * math.cos(i * math.pi / 4)
         ay = y + 18 + 7 * math.sin(i * math.pi / 4)
         draw.ellipse([ax - 1, ay - 1, ax + 1, ay + 1], fill=(255, 220, 0))
@@ -358,12 +390,12 @@ def icon_trade(draw, x, y, s=62):
 
 def icon_boat(draw, x, y, s=62):
     draw.rectangle([x, y, x + s, y + s], fill=(198, 220, 232), outline=RULE)
+    draw.text((x + 6, y + 4), "24", font=F(SERIF_B, 16), fill=INK)
+    draw.text((x + 28, y + 8), "DEAD", font=f_tiny_b, fill=RED_DARK)
     draw.polygon([(x + 10, y + 40), (x + 52, y + 40), (x + 44, y + 50),
                   (x + 18, y + 50)], fill=(60, 60, 60))
     draw.rectangle([x + 26, y + 26, x + 36, y + 40], fill=(120, 60, 40))
     draw.line([(x + 6, y + 54), (x + 56, y + 54)], fill=BLUE, width=2)
-    draw.text((x + 6, y + 4), "24", font=F(SERIF_B, 16), fill=INK)
-    draw.text((x + 28, y + 8), "DEAD", font=f_tiny_b, fill=RED_DARK)
 
 
 def icon_bottle(draw, x, y, s=62):
@@ -378,18 +410,19 @@ def icon_bottle(draw, x, y, s=62):
 
 def icon_rugby(draw, x, y, s=62):
     draw.rectangle([x, y, x + s, y + s], fill=(30, 90, 50), outline=RULE)
-    draw.ellipse([x + 10, y + 14, x + 52, y + 40], fill=(200, 170, 90), outline=(255, 255, 255))
+    draw.ellipse([x + 10, y + 14, x + 52, y + 40], fill=(200, 170, 90),
+                 outline=(255, 255, 255))
     draw.line([(x + 31, y + 14), (x + 31, y + 40)], fill=(255, 255, 255), width=2)
     draw.text((x + 6, y + 44), "37–12", font=F(SERIF_B, 14), fill=(255, 255, 255))
 
 
 def icon_march(draw, x, y, s=62):
     draw.rectangle([x, y, x + s, y + s], fill=(238, 232, 214), outline=RULE)
-    for i, px in enumerate([12, 24, 36, 48]):
+    draw.text((x + 6, y + 4), "82,500", font=F(SERIF_B, 13), fill=INK)
+    for px in [12, 24, 36, 48]:
         draw.ellipse([x + px, y + 14, x + px + 8, y + 22], fill=INK)
         draw.rectangle([x + px + 1, y + 22, x + px + 7, y + 44], fill=INK)
     draw.rectangle([x + 6, y + 48, x + 56, y + 50], fill=INK)
-    draw.text((x + 6, y + 4), "82,500", font=F(SERIF_B, 13), fill=INK)
     draw.text((x + 6, y + s - 12), "MARCHERS", font=f_tiny_b, fill=GREY)
 
 
@@ -400,16 +433,16 @@ ICONS = {
 }
 
 # ------------------------------------------------------------------- data
-# (num, region, place, topic, status, headline, deck, source, icon)
+# (num, region, place, status, headline, deck, source, icon)
 SMALL = [
     (4, "Americas", "JUNÍN, PERU · QUAKE", "OFFICIAL",
      "Deep 6.7 quake shakes central Peru",
-     "Centred near Ondores and felt in Lima; landslides and minor damage, no deaths.",
-     "USGS · IGP · AFP · Anadolu", "quake"),
+     "Near Ondores, felt in Lima. 1 dead, 16 hurt, 853 homeless, 93,000 without power.",
+     "USGS · IGP · AFP", "quake"),
     (5, "Americas", "SINALOA, MEXICO · CRIME", "CONFIRMED",
      "Mexico captures cartel boss 'El Chapo Isidro'",
-     "FBI most-wanted, seized in Guasave. 11 dead in the raid that followed.",
-     "AP · Al Jazeera · Mexican defence ministry", "cuffs"),
+     "FBI most-wanted, seized in Guasave. 4 soldiers, 7 gunmen dead in the raid.",
+     "AP · Al Jazeera · DEFENSA", "cuffs"),
     (6, "Global", "GENEVA · ARMS CONTROL", "CONFIRMED",
      "128 nations back 'killer robot' talks",
      "US, Russia, Israel opposed binding rules. Draft rules due by 2028.",
@@ -440,63 +473,68 @@ SMALL = [
      "AFP · FRANCE 24 · LE MONDE", "march"),
 ]
 
+# (num, region, place, headline, source) — 25 more, in order of consequence
 ALSO_ON = [
-    (13, "Gaza City", "Drone strike on food-aid van kills three", "REUTERS"),
-    (14, "Jerusalem", "Eisenkot invites Likud to coalition talks", "TOI"),
-    (15, "Kyiv", "Zelensky calls bridge strike a 'fair response'", "BBC"),
-    (16, "Riyadh", "Coalition says it downed 3 Houthi missiles", "AJ"),
-    (17, "Beirut", "Aoun demands Israel pull-out, end to Iran meddling", "AJ"),
-    (18, "Brussels", "Costa's EU budget: €204bn cut, tax on big tech", "DW"),
-    (19, "Brasilia", "Bolsonaro moved to intensive care", "REUTERS"),
-    (20, "Washington", "FBI probes reported breach of crime database", "BBC"),
-    (21, "Serang, Java", "Sweet factory fire: 3 dead, 36 missing", "GUARDIAN"),
-    (22, "Hanoi", "Parliament passes law to speed land expropriation", "REUTERS"),
-    (23, "Savar", "80 garment factories shut in wage protests", "D. STAR"),
-    (24, "Mastung", "Pakistan says 15 militants killed", "DAWN"),
-    (25, "Beijing", "Singapore's Wong meets Li Qiang; 20+ deals lined up", "ST"),
-    (26, "Qinghai", "M5.9 quake at 10:45 UTC in remote west China", "USGS"),
-    (27, "Zagreb", "Thousands rally over psychiatric ward death", "RTE"),
-    (28, "Dublin", "Ireland beat champions South Africa 20–17", "BBC"),
-    (29, "Turin", "Alcaraz beats Shelton, faces Zverev in ATP Finals final", "BBC"),
-    (30, "Australia", "Hosts beat England by 3 wickets in first T20", "BBC"),
-    (31, "Wellington", "India 486–4, lead NZ by 118 after day three", "AFP"),
-    (32, "Abuja", "CAF makes Kiswahili its fifth official language", "CAF"),
-    (33, "Niger State", "Gunmen kill village head in Borgu dawn raid", "TRUST"),
-    (34, "Darwin", "M6.8 Timor quake felt in Dili and Darwin", "REUTERS"),
-    (35, "Las Vegas", "Verstappen takes pole in Las Vegas", "AP"),
-    (36, "Osaka", "BTS take five MAMA awards, two grand prizes", "YONHAP"),
+    (13, "Middle East", "Gaza City", "Drone strike on food-aid van kills three", "REUTERS"),
+    (14, "Middle East", "Jerusalem", "Eisenkot invites Likud to coalition talks", "TOI"),
+    (15, "Europe", "Kyiv", "Zelensky calls bridge strike a 'fair response'", "BBC"),
+    (16, "Middle East", "Riyadh", "Coalition says it downed 3 Houthi missiles", "AJ"),
+    (17, "Middle East", "Beirut", "Aoun demands Israel pull-out", "AJ"),
+    (18, "Europe", "Brussels", "Costa's EU budget: €204bn cut, big-tech tax", "DW"),
+    (19, "Americas", "Brasilia", "Bolsonaro moved to intensive care", "REUTERS"),
+    (20, "Americas", "Washington", "FBI probes breach of crime database", "BBC"),
+    (21, "South-East Asia", "Serang, Java", "Factory fire: 3 dead, 36 missing", "GUARDIAN"),
+    (22, "South-East Asia", "Hanoi", "Law to speed land expropriation passed", "REUTERS"),
+    (23, "South Asia", "Savar", "80 garment factories shut in wage protests", "D. STAR"),
+    (24, "South Asia", "Mastung", "Pakistan says 15 militants killed", "DAWN"),
+    (25, "East Asia", "Beijing", "Wong meets Li Qiang; 20+ deals lined up", "ST"),
+    (26, "East Asia", "Qinghai", "M5.9 quake in remote west China", "USGS"),
+    (27, "Europe", "Zagreb", "Thousands rally over psychiatric ward death", "RTE"),
+    (28, "Europe", "Dublin", "Ireland beat champions South Africa 20–17", "BBC"),
+    (29, "Europe", "Turin", "Alcaraz beats Shelton, faces Zverev in final", "BBC"),
+    (30, "Oceania", "Australia", "Hosts beat England by 3 wickets in first T20", "BBC"),
+    (31, "Oceania", "Wellington", "India 486–4, lead NZ by 118", "AFP"),
+    (32, "Africa", "Abuja", "CAF makes Kiswahili fifth official language", "CAF"),
+    (33, "Africa", "Niger State", "Gunmen kill village head in Borgu raid", "TRUST"),
+    (34, "Oceania", "Darwin", "M6.8 Timor quake felt in Dili and Darwin", "REUTERS"),
+    (35, "Americas", "Las Vegas", "Verstappen takes pole in Las Vegas", "AP"),
+    (36, "East Asia", "Osaka", "BTS take five MAMA awards, two grand prizes", "YONHAP"),
+    (37, "Middle East", "Hormuz", "Lewis Pugh ends 15 km swim for sea life", "AP"),
 ]
 
-REGION_COUNTS = [("Europe", 9), ("Middle East", 5), ("Americas", 5),
+REGION_COUNTS = [("Europe", 9), ("Middle East", 6), ("Americas", 5),
                  ("Africa", 3), ("South Asia", 3), ("East Asia", 3),
                  ("South-East Asia", 2), ("Oceania", 3), ("Global", 3)]
 
+# Short captions: each must fit two lines of 8pt in one stat box.
 STATS = [
-    ("2", "tankers hit off Khasab, Strait of Hormuz (UKMTO)"),
-    ("130+", "countries want fossil fuels named at COP31 (AFP)"),
-    ("730m", "people in the new EU–Indonesia trade area (EU)"),
-    ("128", "states at the Geneva autonomous-weapons talks (DW)"),
-    ("$5m", "FBI reward that stood on 'El Chapo Isidro' (FBI)"),
-    ("8 yrs", "BepiColombo's journey from Earth to Mercury (ESA)"),
+    ("2", "tankers hit off Khasab (UKMTO)"),
+    ("130+", "states want fossil fuels named at COP31"),
+    ("730m", "people in EU–Indonesia trade area"),
+    ("128", "states at Geneva arms talks (DW)"),
+    ("$5m", "FBI reward on 'El Chapo Isidro'"),
+    ("8 yrs", "BepiColombo's trip to Mercury (ESA)"),
 ]
 
+# Seven moments, one row, room to breathe (v1 squeezed nine).
 TIMELINE = [
     ("00:09", "Peru M6.7 quake"),
-    ("02:00", "Sinaloa gunfight"),
     ("05:00", "Tanker hit, Hormuz"),
     ("06:50", "Sparta II alarm"),
     ("09:42", "M6.8 quake, Banda Sea"),
     ("12:12", "EU–Indonesia signing"),
     ("18:24", "BepiColombo orbit burn"),
     ("19:44", "Bahrain site ablaze"),
-    ("Night", "COP31 talks go on"),
 ]
 
 # ------------------------------------------------------------ world map
 def draw_world_map(draw, x0, y0, w, h):
-    """Simplified world map with numbered pins for stories 1-12."""
+    """Simplified world map with numbered pins for stories 1-12.
+
+    Europe pins are spread apart (v1 piled them on one spot); pin 7
+    is Mercury, which has no place on Earth, so the caption says so.
+    """
     draw.rectangle([x0, y0, x0 + w, y0 + h], fill=(222, 232, 236), outline=RULE)
-    # rough continents (stylised blobs)
     land = [
         # North America
         [(0.02, 0.12), (0.10, 0.06), (0.24, 0.10), (0.26, 0.22), (0.18, 0.34),
@@ -519,20 +557,20 @@ def draw_world_map(draw, x0, y0, w, h):
     for poly in land:
         pts = [(x0 + w * px, y0 + h * py) for px, py in poly]
         draw.polygon(pts, fill=LAND, outline=(150, 140, 110))
-    # pins: (num, x_frac, y_frac, region)
-    pins = [(1, 0.60, 0.30, "Middle East"), (2, 0.53, 0.13, "Europe"),
-            (3, 0.52, 0.20, "Global"), (4, 0.27, 0.52, "Americas"),
-            (5, 0.17, 0.26, "Americas"), (6, 0.49, 0.20, "Global"),
-            (7, 0.50, 0.05, "Global"), (8, 0.47, 0.15, "Europe"),
-            (9, 0.51, 0.44, "Africa"), (10, 0.68, 0.38, "South Asia"),
-            (11, 0.44, 0.12, "Europe"), (12, 0.46, 0.17, "Europe")]
+    # (num, x_frac, y_frac, region) — Europe pins spread out on purpose
+    pins = [(1, 0.60, 0.30, "Middle East"), (2, 0.53, 0.11, "Europe"),
+            (3, 0.55, 0.22, "Global"), (4, 0.27, 0.52, "Americas"),
+            (5, 0.17, 0.26, "Americas"), (6, 0.485, 0.20, "Global"),
+            (8, 0.465, 0.15, "Europe"), (9, 0.51, 0.44, "Africa"),
+            (10, 0.68, 0.38, "South Asia"), (11, 0.435, 0.11, "Europe"),
+            (12, 0.45, 0.19, "Europe")]
     for num, fx, fy, region in pins:
         px, py = x0 + w * fx, y0 + h * fy
         c = REGION_COLORS[region]
         draw.ellipse([px - 7, py - 7, px + 7, py + 7], fill=c, outline=(255, 255, 255))
         tw = d.textlength(str(num), font=f_tiny_b)
         d.text((px - tw / 2, py - 5), str(num), font=f_tiny_b, fill=(255, 255, 255))
-    d.text((x0 + 6, y0 + h - 14), "Pins carry each story's number; colour = region.",
+    d.text((x0 + 6, y0 + h - 14), "Pins carry each story's number; colour = region. No. 7 is Mercury.",
            font=f_tiny, fill=INK_SOFT)
 
 
@@ -540,28 +578,28 @@ def draw_world_map(draw, x0, y0, w, h):
 y = 0
 # top strip
 d.text((16, 3), "THE WORLD IN ONE DAY", font=f_label, fill=INK)
-centered(d, 3, "DAY 325 OF 2026", f_label, fill=RED_DARK)
+centred(d, 3, "DAY 325 OF 2026", f_label, fill=RED_DARK)
 r = "ALL TIMES UTC · RANKED BY CONSEQUENCE"
 d.text((W - 16 - d.textlength(r, font=f_label), 3), r, font=f_label, fill=INK)
 y = 16
-hline(y)
+rule(y)
 # headline
 y = 20
-centered(d, y, "Saturday 21 November 2026", f_headline, fill=INK)
+centred(d, y, "Saturday 21 November 2026", f_masthead, fill=INK)
 y = 88
-hline(y)
+rule(y)
 y = 92
-centered(d, y, "36 STORIES, 9 REGIONS, EVERY ONE DATED SATURDAY 21 NOVEMBER 2026",
-         F(SANS_B, 10), fill=RED_DARK)
+centred(d, y, "37 STORIES, 9 REGIONS, EVERY ONE DATED SATURDAY 21 NOVEMBER 2026",
+        F(SANS_B, 10), fill=RED_DARK)
 y = 106
-hline(y)
+rule(y)
 # ticker
 y = 110
-centered(d, y, "Iran strikes Bahrain as tankers hit in Hormuz  ◆  Drones set Russian cargo ship ablaze off Finland  ◆  COP31 deadlocked over fossil fuels in overtime",
-         f_italic, fill=INK)
+centred(d, y, "Iran strikes Bahrain as tankers hit in Hormuz  ◆  Drones set Russian cargo ship ablaze off Finland  ◆  COP31 deadlocked over fossil fuels in overtime",
+        f_italic, fill=INK)
 y = 126
-hline(y, width=2)
-# timeline strip
+rule(y, width=2)
+# timeline strip — seven moments, one row, labels wrapped to two lines
 y = 130
 d.rectangle([16, y, 108, y + 26], fill=INK)
 d.text((22, y + 8), "THE DAY IN UTC", font=f_kicker_sm, fill=(255, 255, 255))
@@ -572,22 +610,22 @@ for i, (t, label) in enumerate(TIMELINE):
     px = tx0 + (tx1 - tx0) * (i + 0.5) / n
     d.ellipse([px - 3, y + 11, px + 3, y + 17], fill=RED, outline=(255, 255, 255))
     d.text((px - d.textlength(t, font=f_tiny_b) / 2, y + 2), t, font=f_tiny_b, fill=INK)
-    lw = d.textlength(label, font=f_tiny)
-    d.text((px - lw / 2, y + 18), label, font=f_tiny, fill=INK_SOFT)
-y = 160
-hline(y)
-# stat boxes
-y = 164
+    col_w = (tx1 - tx0) / n - 8
+    wrap(d, (px - col_w / 2, y + 20), label, f_tiny, col_w, fill=INK_SOFT)
+y = 172
+rule(y)
+# stat boxes — short captions, two lines at most
+y = 176
 bw = (W - 32 - 5 * 6) / 6
 for i, (num, cap) in enumerate(STATS):
     x = 16 + i * (bw + 6)
     d.rectangle([x, y, x + bw, y + 48], outline=RULE, width=1)
     d.text((x + 6, y + 2), num, font=f_stat if len(num) <= 4 else f_stat_sm, fill=INK)
-    text_wrapped(d, (x + 6, y + 27), cap, f_tiny, bw - 12, fill=INK_SOFT)
-y = 212
-hline(y)
+    wrap(d, (x + 6, y + 27), cap, f_tiny, bw - 12, fill=INK_SOFT)
+y = 224
+rule(y)
 # region bar
-y = 216
+y = 228
 d.text((16, y), "STORIES BY REGION", font=f_kicker_sm, fill=INK)
 rx = 118
 total = sum(c for _, c in REGION_COUNTS)
@@ -602,45 +640,44 @@ for name, cnt in REGION_COUNTS:
     lw = d.textlength(lab, font=f_tiny)
     d.text((rx + seg / 2 - lw / 2, y + 14), lab, font=f_tiny, fill=INK_SOFT)
     rx += seg
-y = 242
-hline(y)
+y = 254
+rule(y)
 
 # ---------------------------------------------------------------- heroes
 HEROES = [
-    ("draw_hormuz", 1, "MIDDLE EAST", "BAHRAIN · HORMUZ · CONFLICT", "CONFIRMED",
+    ("draw_hormuz", 1, "MIDDLE EAST · BAHRAIN · HORMUZ · CONFLICT", "CONFIRMED",
      "Iran strikes Bahrain as tankers hit in Hormuz",
-     "Bahrain: Iranian attack set a civilian industrial site ablaze, no one hurt. "
+     "Bahrain: Iranian attack set a civilian industrial site ablaze in Sitra. "
      "IRGC says it hit US positions; UKMTO: two tankers attacked off Khasab.",
      "AL JAZEERA · REUTERS · AFP"),
-    ("draw_sparta", 2, "EUROPE", "GULF OF FINLAND · CONFLICT", "CONFIRMED",
+    ("draw_sparta", 2, "EUROPE · GULF OF FINLAND · CONFLICT", "CONFIRMED",
      "Drones set Russian cargo ship ablaze off Finland",
-     "Sparta II, bound for Kaliningrad, was hit about 06:50 UTC and drifted into "
-     "Finnish waters; crew evacuated. Finland: Ukraine likely behind it.",
+     "Sparta II, bound for Kaliningrad, hit about 06:50 UTC; drifted into "
+     "Finnish waters. 16 crew evacuated, 1 hurt. Finland: Ukraine likely behind it.",
      "BBC · FRANCE 24 · MOSCOW TIMES"),
-    ("draw_cop31", 3, "GLOBAL", "COP31, ANTALYA · CLIMATE", "CONFIRMED",
+    ("draw_cop31", 3, "GLOBAL · COP31, ANTALYA · CLIMATE", "CONFIRMED",
      "COP31 deadlocked over fossil fuels in overtime",
      "A day past deadline in Antalya, talks paused overnight. EU and Pacific "
-     "states reject a draft omitting fossil fuels; 130+ countries want them named.",
+     "states reject a draft omitting fossil fuels.",
      "BBC · AFP · FRANCE 24"),
 ]
 
-y = 246
+y = 258
 col_w = (W - 32 - 2 * 8) / 3
 hero_bottom = y
-for i, (fn, num, region, topic, status, head, deck, src) in enumerate(HEROES):
+for i, (fn, num, topic, status, head, deck, src) in enumerate(HEROES):
     x = 16 + i * (col_w + 8)
-    globals()[fn](d, int(x), y, int(col_w), 144)
-    ky = y + 148
-    kicker_line(d, int(x), ky, num, region, topic, status)
-    badge(d, int(x + col_w) - 62, ky, status,
-          GREEN if status == "CONFIRMED" else BLUE)
+    globals()[fn](d, int(x), y, int(col_w), 132)
+    ky = y + 136
+    kicker(d, int(x), ky, num, topic, status)
+    pill(d, int(x + col_w) - 62, ky, status, status_fill(status))
     hy = ky + 15
-    hy = text_wrapped(d, (int(x), hy), head, f_hero_head, int(col_w), fill=INK)
-    hy = text_wrapped(d, (int(x), hy + 2), deck, f_deck, int(col_w), fill=INK_SOFT)
-    source_line(d, int(x), hy + 2, src)
+    hy = wrap(d, (int(x), hy), head, f_hero_head, int(col_w), fill=INK)
+    hy = wrap(d, (int(x), hy + 2), deck, f_deck, int(col_w), fill=INK_SOFT)
+    source(d, int(x), hy + 2, src)
     hero_bottom = max(hero_bottom, hy + 12)
 y = hero_bottom + 4
-hline(y)
+rule(y)
 
 # ------------------------------------------------------- small stories
 y = y + 6
@@ -653,14 +690,13 @@ for r in range(3):
         ICONS[icon](d, int(x), yy, 62)
         tx = int(x) + 68
         tw = int(col_w) - 68
-        kicker_line(d, tx, yy, num, region, place, status)
-        badge(d, int(x + col_w) - 62, yy, status,
-              GREEN if status == "CONFIRMED" else BLUE)
-        hy = text_wrapped(d, (tx, yy + 14), head, f_small_head, tw, fill=INK)
-        hy = text_wrapped(d, (tx, hy + 1), deck, f_deck_small, tw, fill=INK_SOFT)
-        source_line(d, tx, hy, src)
+        kicker(d, tx, yy, num, place, status)
+        pill(d, int(x + col_w) - 62, yy, status, status_fill(status))
+        hy = wrap(d, (tx, yy + 14), head, f_small_head, tw, fill=INK)
+        hy = wrap(d, (tx, hy + 1), deck, f_deck_sm, tw, fill=INK_SOFT)
+        source(d, tx, hy, src)
 y = y + 3 * row_h + 4
-hline(y)
+rule(y)
 
 # ------------------------------------------------- map + also-on list
 y = y + 6
@@ -671,25 +707,27 @@ map_x, map_y, map_w, map_h = 16, y + 26, 330, 158
 draw_world_map(d, map_x, map_y, map_w, map_h)
 list_x = 362
 d.text((list_x, y), "ALSO ON SATURDAY 21 NOVEMBER 2026", font=f_kicker, fill=INK)
-d.text((list_x, y + 12), "24 more stories, in order of consequence",
+d.text((list_x, y + 12), "25 more stories, in order of consequence",
        font=f_tiny, fill=INK_SOFT)
 ly = y + 26
 col2_x = list_x + 318
-for i, (num, place, head, src) in enumerate(ALSO_ON):
-    cx = list_x if i < 12 else col2_x
-    cy = ly + (i % 12) * 13
-    d.text((cx, cy), str(num), font=f_list_b, fill=RED)
+for i, (num, region, place, head, src) in enumerate(ALSO_ON):
+    cx = list_x if i < 13 else col2_x
+    cy = ly + (i % 13) * 12
+    # region-colour square, then number, then headline, source right-aligned
+    d.rectangle([cx, cy + 1, cx + 7, cy + 8], fill=REGION_COLORS[region])
+    d.text((cx + 10, cy), str(num), font=f_list_b, fill=RED)
     line = f"{place}  {head}"
-    maxw = 272
+    maxw = 318 - 28 - 46 + 18
     if d.textlength(line, font=f_list) > maxw:
         while d.textlength(line + "…", font=f_list) > maxw and len(line) > 10:
             line = line[:-1]
         line += "…"
-    d.text((cx + 18, cy), line, font=f_list, fill=INK)
+    d.text((cx + 28, cy), line, font=f_list, fill=INK)
     sw = d.textlength(src, font=f_tiny)
-    d.text((cx + 296 - sw, cy + 1), src, font=f_tiny, fill=GREY)
-y = max(map_y + map_h, ly + 12 * 13) + 8
-hline(y)
+    d.text((cx + 314 - sw, cy + 1), src, font=f_tiny, fill=GREY)
+y = max(map_y + map_h, ly + 13 * 12) + 8
+rule(y)
 
 # ------------------------------------------------------------ date check
 y = y + 6
@@ -699,9 +737,9 @@ dc = ("Well-known stories left out: they belong to another day (UTC).  "
       "Fri 20 Nov: Russian missiles land in Poland · Denmark expels Russian attaché · "
       "Wall Street tech sell-off.  Sun 22 Nov: Verstappen wins Las Vegas GP · new COP31 draft.  "
       "Not yet (future): COP31 approval session Sun 06:00 GMT · Liverpool v Man United (Sun).")
-text_wrapped(d, (24, y + 16), dc, f_deck_small, W - 48, fill=INK_SOFT)
+wrap(d, (24, y + 16), dc, f_deck_sm, W - 48, fill=INK_SOFT)
 y = y + 42
-hline(y)
+rule(y)
 # footer
 y = y + 5
 d.text((16, y), "HOW SURE", font=f_kicker_sm, fill=INK)
@@ -713,16 +751,16 @@ for label, col in [("CONFIRMED  2+ major outlets", GREEN),
     d.rectangle([lx, y + 1, lx + 8, y + 9], fill=col)
     d.text((lx + 11, y), label, font=f_tiny, fill=INK_SOFT)
     lx += 11 + d.textlength(label, font=f_tiny) + 16
-y = y + 15
-centered(d, y, "Every story here happened or was first reported on Saturday 21 November 2026 (UTC), told as the named outlets reported it. All maps and drawings are original vector work.",
-         f_tiny, fill=INK_SOFT)
-y = y + 11
-centered(d, y, "Sources: USGS, UKMTO, AFP, Reuters, AP, France 24, PBS, Al Jazeera, ESA, Euronews, Kyodo, ABC",
-         f_tiny, fill=GREY)
+y = y + 13
+centred(d, y, "Every story here happened or was first reported on Saturday 21 November 2026 (UTC), told as the named outlets reported it. All maps and drawings are original vector work.",
+        f_tiny, fill=INK_SOFT)
+y = y + 9
+centred(d, y, "Sources: USGS, UKMTO, AFP, Reuters, AP, France 24, PBS, Al Jazeera, ESA, Euronews, Kyodo, ABC",
+        f_tiny, fill=GREY)
 
 # ------------------------------------------------------------------ save
 out_path = sys.argv[1] if len(sys.argv) > 1 else "entry.png"
 img.save(out_path, format="PNG")
 data = open(out_path, "rb").read()
 print(f"{out_path}: {len(data)} bytes, sha256 {hashlib.sha256(data).hexdigest()}")
-print(f"size: {img.size[0]}x{img.size[1]}, stories: 36, regions: 9")
+print(f"size: {img.size[0]}x{img.size[1]}, stories: 37, regions: 9")
