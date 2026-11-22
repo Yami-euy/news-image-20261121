@@ -1,40 +1,40 @@
-// main.ts — "The World in One Page" v3, 21 November 2026 (news-image-20261121).
+// main.ts — "The World in One Page" v4, Saturday 21 November 2026.
+// Entry for news-image-20261121: one newspaper front page of the day's
+// world news, drawn by render.py into entry.png next to this file.
 //
-// The entry is one picture of the day's world news, drawn by render.py
-// into entry.png next to this file. This program only carries that
-// picture into the grader's output directory, unchanged, so the judge
-// sees exactly the bytes the renderer produced.
+// This program only moves that picture into the grader's output
+// directory, byte for byte, so the judge sees exactly what the
+// renderer produced. Nothing is re-encoded or resized here.
 //
 // Node 22, standard library only. The grader runs it twice and both
-// runs must write the same bytes; a plain file copy guarantees that.
+// runs must write identical bytes; a plain read + write guarantees it.
 //
 //   mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SOURCE = join(HERE, "entry.png");
-const OUT_DIR = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
-const TARGET = join(OUT_DIR, "entry.png");
-const CAP = 1048576; // 1 MiB, the competition's file cap
+const FOLDER = dirname(fileURLToPath(import.meta.url));
+const PICTURE = join(FOLDER, "entry.png");
+const DEST_DIR = process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
+const DEST = join(DEST_DIR, "entry.png");
+const LIMIT = 1048576; // 1 MiB, the competition's file cap
 
-function fail(message: string): never {
-  throw new Error(`main.ts: ${message}`);
+function abort(why: string): never {
+  throw new Error(`main.ts: ${why}`);
 }
 
-if (!existsSync(SOURCE)) fail(`entry.png is missing next to main.ts (${SOURCE})`);
-const size = statSync(SOURCE).size;
-if (size === 0) fail("entry.png is empty");
-if (size > CAP) fail(`entry.png is ${size} bytes, over the 1 MiB cap`);
+if (!existsSync(PICTURE)) abort(`no entry.png beside main.ts (${PICTURE})`);
+const bytes = readFileSync(PICTURE);
+if (bytes.length === 0) abort("entry.png is empty");
+if (bytes.length > LIMIT) abort(`entry.png is ${bytes.length} bytes, over the 1 MiB cap`);
 
-mkdirSync(OUT_DIR, { recursive: true });
-copyFileSync(SOURCE, TARGET);
+mkdirSync(DEST_DIR, { recursive: true });
+writeFileSync(DEST, bytes);
 
-// Prove the copy instead of trusting it: the judge sees exactly
-// these bytes, so read both back and compare.
-const before = readFileSync(SOURCE);
-const after = readFileSync(TARGET);
-if (!before.equals(after)) fail("copied entry.png differs from the source");
-console.log(`entry.png: ${after.length} bytes -> ${TARGET}`);
+// Check the copy instead of trusting it: the judge sees exactly
+// these bytes, so read the copy back and compare with the source.
+const check = readFileSync(DEST);
+if (!check.equals(bytes)) abort("copied entry.png differs from the source");
+console.log(`entry.png: ${check.length} bytes -> ${DEST}`);
